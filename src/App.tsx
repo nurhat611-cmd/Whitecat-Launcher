@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import type {
   DownloadTask,
   JavaInfo,
@@ -26,6 +29,7 @@ import { Sidebar } from "./components/Sidebar";
 import { HomeTab } from "./components/HomeTab";
 import { ContentTab } from "./components/ContentTab";
 import { SettingsTab } from "./components/SettingsTab";
+import { UpdateDialog } from "./components/UpdateDialog";
 
 type Tone = "ok" | "warn" | "err" | "busy" | "idle";
 
@@ -42,12 +46,43 @@ export default function App() {
   const [versions, setVersions] = useState<VersionList | null>(null);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [queue, setQueue] = useState<DownloadTask[]>([]);
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
+  const [updateDownloading, setUpdateDownloading] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const launchingRef = useRef(false);
 
   // Splash-экран живёт ровно 2 секунды, после чего плавно растворяется.
   useEffect(() => {
     const timer = setTimeout(() => setSplash(false), 2000);
     return () => clearTimeout(timer);
+  }, []);
+
+  // В production-сборке проверяем статический latest.json при запуске.
+  // В браузерном предпросмотре и локальном dev-режиме updater не вызывается.
+  useEffect(() => {
+    if (!isTauri() || import.meta.env.VITE_UPDATER_ENABLED !== "true") return;
+    let disposed = false;
+    let pendingUpdate: Update | null = null;
+
+    void check({ timeout: 20_000 })
+      .then(async (nextUpdate) => {
+        pendingUpdate = nextUpdate;
+        if (disposed) {
+          await nextUpdate?.close().catch(() => undefined);
+          return;
+        }
+        if (nextUpdate) setAvailableUpdate(nextUpdate);
+      })
+      .catch((reason: unknown) => {
+        // Недоступный GitHub или отсутствие сети не мешают запуску лаунчера.
+        console.warn("Не удалось проверить обновление MyLauncher:", reason);
+      });
+
+    return () => {
+      disposed = true;
+      if (pendingUpdate) void pendingUpdate.close().catch(() => undefined);
+    };
   }, []);
 
   useEffect(() => {
@@ -156,18 +191,23 @@ export default function App() {
     }
   }, []);
 
-  const onDownloadVersion = useCallback(async (versionId: string, loader: string) => {
-    if (!isTauri()) {
-      setError("Скачивание работает в приложении: запустите npm run tauri dev");
-      return;
-    }
-    try {
-      await enqueueVersion(versionId, loader);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
+  const onDownloadVersion = useCallback(
+    async (versionId: string, loader: string) => {
+      if (!isTauri()) {
+        setError(
+          "Скачивание работает в приложении: запустите npm run tauri dev",
+        );
+        return;
+      }
+      try {
+        await enqueueVersion(versionId, loader);
+        setError(null);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [],
+  );
 
   const busy = launch !== null && launch.stage !== "done";
   const activeTask =
@@ -175,13 +215,16 @@ export default function App() {
     queue.find((task) => task.status === "queued");
   const downloadingVersion = queue.some(
     (task) =>
-      task.kind === "version" && (task.status === "running" || task.status === "queued"),
+      task.kind === "version" &&
+      (task.status === "running" || task.status === "queued"),
   );
 
   const play = useCallback(async () => {
     if (launchingRef.current) return;
     if (!isTauri()) {
-      setError("Запустите приложение через npm run tauri dev, чтобы подключить Rust-бэкенд");
+      setError(
+        "Запустите приложение через npm run tauri dev, чтобы подключить Rust-бэкенд",
+      );
       return;
     }
     setError(null);
@@ -200,9 +243,53 @@ export default function App() {
     }
   }, [settings]);
 
+  const installUpdate = useCallback(async () => {
+    if (!availableUpdate || updateDownloading) return;
+    setUpdateDownloading(true);
+    setUpdateProgress(null);
+    setUpdateError(null);
+
+    let receivedBytes = 0;
+    let expectedBytes: number | null = null;
+    try {
+      await availableUpdate.downloadAndInstall((event: DownloadEvent) => {
+        if (event.event === "Started") {
+          receivedBytes = 0;
+          expectedBytes = event.data.contentLength ?? null;
+          setUpdateProgress(expectedBytes ? 0 : null);
+        } else if (event.event === "Progress") {
+          receivedBytes += event.data.chunkLength;
+          setUpdateProgress(
+            expectedBytes
+              ? Math.min(99, Math.floor((receivedBytes / expectedBytes) * 100))
+              : null,
+          );
+        } else if (event.event === "Finished") {
+          setUpdateProgress(100);
+        }
+      });
+      await relaunch();
+    } catch (reason) {
+      const details = reason instanceof Error ? reason.message : String(reason);
+      setUpdateError(`Не удалось установить обновление. ${details}`);
+      setUpdateProgress(null);
+    } finally {
+      setUpdateDownloading(false);
+    }
+  }, [availableUpdate, updateDownloading]);
+
+  const dismissUpdate = useCallback(() => {
+    const pending = availableUpdate;
+    setAvailableUpdate(null);
+    setUpdateError(null);
+    setUpdateProgress(null);
+    if (pending) void pending.close().catch(() => undefined);
+  }, [availableUpdate]);
+
   let status: { text: string; tone: Tone; percent?: number };
   if (error) status = { text: error, tone: "err" };
-  else if (busy && launch) status = { text: launch.message, tone: "busy", percent: launch.percent };
+  else if (busy && launch)
+    status = { text: launch.message, tone: "busy", percent: launch.percent };
   else if (activeTask)
     status = {
       text: `${activeTask.title} · ${activeTask.progress.currentFile || activeTask.progress.message}`,
@@ -210,12 +297,23 @@ export default function App() {
       percent: activeTask.progress.percent,
     };
   else if (launch?.stage === "done")
-    status = { text: `Игра запущена${gamePid ? ` · PID ${gamePid}` : ""}`, tone: "ok" };
-  else if (jdk) status = { text: `${jdk.message} · ${jdk.percent}%`, tone: "busy" };
+    status = {
+      text: `Игра запущена${gamePid ? ` · PID ${gamePid}` : ""}`,
+      tone: "ok",
+    };
+  else if (jdk)
+    status = { text: `${jdk.message} · ${jdk.percent}%`, tone: "busy" };
   else if (loading) status = { text: "Инициализация…", tone: "idle" };
-  else if (!isTauri()) status = { text: "Запустите приложение через npm run tauri dev", tone: "warn" };
+  else if (!isTauri())
+    status = {
+      text: "Запустите приложение через npm run tauri dev",
+      tone: "warn",
+    };
   else if (!java?.found)
-    status = { text: "Java не найдена — скачайте JDK во вкладке «Настройки»", tone: "warn" };
+    status = {
+      text: "Java не найдена — скачайте JDK во вкладке «Настройки»",
+      tone: "warn",
+    };
   else status = { text: "Готов к запуску", tone: "ok" };
 
   return (
@@ -248,7 +346,11 @@ export default function App() {
                   />
                 )}
                 {tab === "content" && (
-                  <ContentTab versions={versions} settings={settings} queue={queue} />
+                  <ContentTab
+                    versions={versions}
+                    settings={settings}
+                    queue={queue}
+                  />
                 )}
                 {tab === "settings" && (
                   <SettingsTab
@@ -267,7 +369,11 @@ export default function App() {
             <button
               className={`play-btn${busy ? " playing" : ""}`}
               onClick={play}
-              disabled={busy || downloadingVersion || (jdk !== null && jdk.stage !== "done")}
+              disabled={
+                busy ||
+                downloadingVersion ||
+                (jdk !== null && jdk.stage !== "done")
+              }
             >
               {busy
                 ? (launch?.message ?? "ЗАПУСК…").toUpperCase()
@@ -285,6 +391,22 @@ export default function App() {
           </div>
         </main>
       </div>
+      <AnimatePresence>
+        {availableUpdate && (
+          <UpdateDialog
+            key="available-update"
+            version={availableUpdate.version}
+            currentVersion={availableUpdate.currentVersion}
+            releaseNotes={availableUpdate.body}
+            releaseDate={availableUpdate.date}
+            downloading={updateDownloading}
+            progress={updateProgress}
+            error={updateError}
+            onUpdate={installUpdate}
+            onLater={dismissUpdate}
+          />
+        )}
+      </AnimatePresence>
     </>
   );
 }

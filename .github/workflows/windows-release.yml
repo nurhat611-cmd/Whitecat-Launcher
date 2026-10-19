@@ -1,0 +1,138 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis --yes --no-progress
+          }
+          $nsisDirectory = Join-Path ${env:ProgramFiles(x86)} "NSIS"
+          $makensisPath = Join-Path $nsisDirectory "makensis.exe"
+          if (Test-Path $makensisPath) {
+            $nsisDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and -not (Test-Path $makensisPath)) {
+            throw "NSIS был установлен, но makensis.exe не найден."
+          }
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Read and validate release version
+        id: app-version
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Некорректная версия package.json: $version"
+          }
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Тег $env:GITHUB_REF_NAME не совпадает с версией приложения v$version."
+          }
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Configure updater verification key
+        shell: pwsh
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: node scripts/configure-updater.mjs
+
+      - name: Build signed NSIS application
+        shell: pwsh
+        env:
+          VITE_UPDATER_ENABLED: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "Добавьте TAURI_SIGNING_PRIVATE_KEY в GitHub Actions Secrets, а публичный ключ — в Actions Variables как TAURI_UPDATER_PUBLIC_KEY."
+          }
+          npm run tauri build -- --bundles nsis
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package bootstrapper and updater manifest
+        id: package-assets
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ steps.app-version.outputs.value }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          $assetsDirectory = Join-Path $env:GITHUB_WORKSPACE "release-assets"
+          New-Item -ItemType Directory -Path $assetsDirectory -Force | Out-Null
+
+          $bundleDirectory = Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\release\bundle\nsis"
+          $setup = Get-ChildItem -Path $bundleDirectory -Filter "*-setup.exe" -File | Select-Object -First 1
+          if (-not $setup) { throw "Не найден NSIS installer в $bundleDirectory" }
+          $signature = Get-Item -LiteralPath ($setup.FullName + ".sig") -ErrorAction SilentlyContinue
+          if (-not $signature) { throw "Не найдена подпись updater-артефакта: $($setup.Name).sig" }
+
+          Copy-Item -LiteralPath $setup.FullName -Destination (Join-Path $assetsDirectory $setup.Name) -Force
+          Copy-Item -LiteralPath $signature.FullName -Destination (Join-Path $assetsDirectory $signature.Name) -Force
+
+          $appBinary = Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\release") -Filter "*.exe" -File |
+            Where-Object { $_.Name -match "launcher" } |
+            Select-Object -First 1
+          if (-not $appBinary) { throw "Не найден исполняемый файл лаунчера в src-tauri/target/release." }
+          $portableExe = Join-Path $assetsDirectory "MyLauncher.exe"
+          Copy-Item -LiteralPath $appBinary.FullName -Destination $portableExe -Force
+
+          $payloadDirectory = Join-Path $env:RUNNER_TEMP "whitecat-launcher-payload"
+          New-Item -ItemType Directory -Path $payloadDirectory -Force | Out-Null
+          Copy-Item -LiteralPath $portableExe -Destination (Join-Path $payloadDirectory "MyLauncher.exe") -Force
+          Compress-Archive -Path (Join-Path $payloadDirectory "MyLauncher.exe") -DestinationPath (Join-Path $assetsDirectory "launcher.zip") -Force
+
+          $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
+          if (-not $makensis) { $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe" }
+          if (-not (Test-Path $makensis)) { throw "Не найден makensis.exe." }
+          & $makensis "/DAPP_VERSION=$env:APP_VERSION" "scripts\bootstrapper.nsi"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $releaseTag = "v$env:APP_VERSION"
+          $setupUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$releaseTag/$($setup.Name)"
+          $env:UPDATER_ASSET_URL = $setupUrl
+          $env:UPDATER_SIGNATURE_PATH = $signature.FullName
+          $env:UPDATER_MANIFEST_PATH = Join-Path $assetsDirectory "latest.json"
+          node scripts/create-latest-json.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          "setup=$($setup.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.app-version.outputs.value }}
+          name: MyLauncher v${{ steps.app-version.outputs.value }}
+          body: |
+            Финальная часть лаунчера: автообновление, Windows NSIS-инсталлятор и bootstrapper.
+
+            Скачать обычный установщик можно из `*-setup.exe`; `MyLauncher-Setup.exe` — компактный загрузчик, который скачивает актуальный `launcher.zip` с GitHub Releases или резервного прокси.
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          overwrite_files: true

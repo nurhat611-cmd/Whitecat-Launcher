@@ -1,10 +1,10 @@
 [package]
 name = "lighty-launcher"
-version = "0.2.0"
+version = "0.3.0"
 description = "MyLauncher — offline Minecraft launcher backend (lighty-launcher)"
 authors = ["nurhat611"]
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.90"
 
 [lib]
 name = "lighty_launcher_lib"
@@ -15,6 +15,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
