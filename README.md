@@ -2,6 +2,36 @@
 
 Офлайн-лаунчер Minecraft на **Tauri 2 + React 18 + TypeScript + Rust** (бэкенд `lighty-launcher`).
 
+## Часть 4/4 — финал
+
+**Автообновление**
+- Подключён `tauri-plugin-updater`; в production лаунчер при старте проверяет
+  `https://github.com/nurhat611-cmd/Whitecat-Launcher/releases/latest/download/latest.json`.
+- При наличии новой версии появляется окно «Доступно обновление» с кнопками «Обновить» и
+  «Позже», сведениями о версии, прогрессом загрузки и сообщением об ошибке установки.
+- Обновление Tauri проверяет криптографическую подпись до установки. Закрытый ключ не хранится
+  в Git: задайте `TAURI_SIGNING_PRIVATE_KEY` как GitHub Actions Secret, а соответствующий
+  открытый ключ — как Actions Variable `TAURI_UPDATER_PUBLIC_KEY`. Не публикуйте закрытый ключ.
+- При недоступном GitHub проверка не блокирует запуск лаунчера. В браузерном preview и dev-режиме
+  автообновление отключено.
+
+**NSIS bootstrapper и публикация релизов**
+- `scripts/bootstrapper.nsi` собирается в компактный `MyLauncher-Setup.exe`. При запуске он
+  скачивает `launcher.zip` из последнего GitHub Release, при ошибке пробует ссылку через
+  `ghproxy.com`, устанавливает лаунчер для текущего пользователя, создаёт ярлыки на рабочем
+  столе и в меню «Пуск», а также добавляет деинсталлятор.
+- Workflow `.github/workflows/windows-release.yml` на Windows собирает подписанный NSIS-пакет,
+  portable `MyLauncher.exe`, `launcher.zip`, bootstrapper и `latest.json`, затем публикует их
+  как assets GitHub Release.
+- Для первого релиза сгенерируйте пару Tauri updater keys (`npx tauri signer generate -w
+  ~/.tauri/mylauncher.key`), добавьте содержимое `.pub` в Actions Variable
+  `TAURI_UPDATER_PUBLIC_KEY`, а содержимое приватного файла — в Actions Secret
+  `TAURI_SIGNING_PRIVATE_KEY`. Если ключ защищён паролем, добавьте
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Никогда не добавляйте приватный ключ в репозиторий.
+- После настройки подписи создайте release tag, совпадающий с версией приложения (сейчас
+  `v0.3.0`). В релизе появятся `latest.json`, `launcher.zip`, `MyLauncher.exe`,
+  `MyLauncher-Setup.exe` и подписанный NSIS installer.
+
 ## Часть 2/4 — что добавлено
 
 **Версии и скачивание**

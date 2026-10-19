@@ -148,6 +148,8 @@ pub async fn launch_game(app: AppHandle, settings: LauncherSettings) -> Result<u
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let handle = app.handle().clone();
             // Фоновое обновление списка версий + кеш на диске.
