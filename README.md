@@ -2,6 +2,27 @@
 
 Офлайн-лаунчер Minecraft на **Tauri 2 + React 18 + TypeScript + Rust** (бэкенд `lighty-launcher`).
 
+## Часть 3/4 — что добавлено
+
+**Вкладка «Скины»**
+- Загрузка скина по URL (прямая ссылка на PNG 64×64/64×32) или из файла (file picker, drag-ready).
+- Превью модели Steve/Alex: canvas-рендер с учётом ширины рук (4px vs 3px), overlay-слой головы, тени и подсветки. Переключение без перезагрузки.
+- Сохранение в папку скинов `minecraft/skins/skin.png` (и `skin.json` с моделью/url). Кнопки «Открыть папку», «Удалить скин».
+- Если применить в офлайн-режиме нельзя — показана инструкция: мод CustomSkinLoader / SkinRestorer, папка `skins/`, локальный skin-server.
+
+**Экран «Настройки» — отдельный красивый экран (разделы слева, контент справа):**
+- Общие: язык RU/EN (применяется сразу), тема dark/light (CSS-переменные, `data-theme`).
+- Игра: слайдер RAM 1–16 ГБ, смена папки `.minecraft` (поле + «Открыть»), доп. JVM-аргументы (textarea, поддержка кавычек, передаются в `run_game`).
+- Java: автоопределение (встроенный JDK → ручной путь → JAVA_HOME → PATH → системные каталоги), поле ручного пути к Java, кнопка «Скачать JDK 21» с прогрессом.
+- Аккаунты: переключение между офлайн-профилями (список `profiles` в `settings.json`, добавление/удаление/выбор, текущий ник хранится отдельно, всё без перезагрузки).
+- Обновления: автообновление (тумблер `autoUpdate`), кнопка «Проверить сейчас» (GitHub Releases API + кеш `update_check.json`, `force`).
+- Все настройки сохраняются в JSON (`app_config_dir/settings.json`) и применяются сразу (debounce 400 мс, `data-theme` меняется на лету).
+
+**Обработка ошибок — красивое модальное окно:**
+- При вылете игры (ошибка `launch_game` или падение за 2.5 сек после старта) — модалка с заголовком, подсказкой из `latest.log`/`crash-reports`, вкладками: Ошибка / `latest.log` / `crash-reports` / `launcher.log`.
+- Парсинг `logs/latest.log` и `crash-reports/*.txt` (до 10 последних, сортировка по дате), `hs_err_pid`fallback, усечение до 500 КБ/300 КБ.
+- Кнопки «Копировать лог», «Копировать всё», «Открыть папку с логами» (`open::that` на `logs`, `crash-reports`, `gameDir`), закрытие по оверлею/Esc.
+
 ## Часть 2/4 — что добавлено
 
 **Версии и скачивание**
@@ -38,18 +59,21 @@
 
 **Интерфейс** (тёмная тема, glassmorphism, неоново-синий акцент):
 - Splash-экран: логотип + «MyLauncher», появление/растворение на Framer Motion, 2 секунды.
-- Левое меню: вкладки «Главная», «Контент», «Настройки» (иконки Lucide, подсветка активной).
+- Левое меню: вкладки «Главная», «Контент», «Скины», «Настройки» (иконки Lucide, подсветка активной).
 - Карточка профиля: ник, список версий, загрузчики Vanilla/Fabric/Forge, слайдер RAM 1–16 ГБ.
 - Кнопка «ИГРАТЬ» с эффектом свечения и статус-бар («Готов к запуску» и т.д.).
 - Плавные анимации переключения вкладок (AnimatePresence), hover-эффекты.
 
 **Бэкенд (Rust):**
 - Офлайн-запуск без аккаунта Mojang: legacy-токен, `auth_session`, offline-UUID (MD5 «OfflinePlayer:<ник>»).
-- Полный пайплайн: манифест Mojang → JSON версии → клиент → библиотеки (включая нативки, старые и новые форматы) → ассеты (форматы `objects` и `map`) → сборка командной строки по правилам манифеста.
+- Полный пайплайн: манифест Mojang → JSON версии → клиент → библиотеки (включая нативки, старые и новые форматы) → ассеты (форматы `objects` и `map`) → сборка командной строки по правилам манифеста (+ пользовательские JVM-аргументы).
 - Vanilla — полностью, Fabric — через официальный loader-профиль (meta.fabricmc.net).
-- Автоопределение Java: встроенный JDK → `JAVA_HOME` → `PATH` → типовые каталоги (Adoptium, Microsoft, BellSoft, Corretto, Zulu, `/usr/lib/jvm`, JVM на macOS).
+- Автоопределение Java: ручной путь → встроенный JDK → `JAVA_HOME` → `PATH` → типовые каталоги (Adoptium, Microsoft, BellSoft, Corretto, Zulu, `/usr/lib/jvm`, JVM на macOS).
 - Скачивание JDK 21 (Adoptium API) с прогрессом (событие `jdk_progress`), автоустановка в папку лаунчера (zip / tar.gz).
-- Настройки сохраняются в `settings.json` (app config dir); лог игры — `launcher.log` в папке игры.
+- Скины: `skins/skin.png` + `skin.json` (модель, URL), валидация PNG-сигнатуры, base64-загрузка.
+- Логи: `launcher.log`, `logs/latest.log`, `crash-reports/`, `hs_err_pid*`, кнопки копирования/открытия.
+- Обновления: `updater.rs` (GitHub Releases, кеш `update_check.json`).
+- Настройки сохраняются в `settings.json` (app config dir) с миграцией старых файлов; лог игры — `launcher.log` в папке игры.
 
 ## Запуск
 
@@ -68,19 +92,22 @@ npm run tauri build
 
 ```
 src/                      # React + TS (фронтенд)
-  components/             # Splash, Sidebar, вкладки, DownloadBar (прогресс и очередь)
+  components/             # Splash, Sidebar, вкладки, DownloadBar, SkinsTab, ErrorModal
   lib/api.ts              # обёртки invoke-команд (+ браузерный режим для предпросмотра)
-  types.ts                # типы версий, контента и очереди загрузок
+  types.ts                # типы версий, контента, очереди, скинов, логов, настроек
 src-tauri/
   src/lib.rs              # Tauri-команды, общие типы, HTTP-клиент
   src/versions.rs         # список версий piston-meta: кеш, фоновое обновление
   src/installer.rs        # план установки версии и многопоточный загрузчик
   src/modrinth.rs         # поиск Modrinth, установка модов/ресурспаков/сборок
   src/queue.rs            # очередь загрузок с прогрессом и отменой
-  src/java.rs             # автоопределение Java
+  src/java.rs             # автоопределение Java (с ручным путём)
   src/jdk.rs              # скачивание/установка JDK
-  src/minecraft.rs        # офлайн-запуск, пайплайн установки
-  src/settings.rs         # настройки и папка игры
+  src/minecraft.rs        # офлайн-запуск, пайплайн, JVM-арги, проверка краша
+  src/settings.rs         # настройки и папка игры (миграция)
+  src/skin.rs             # скины: URL/файл, превью, папка skins
+  src/logs.rs             # логи: latest.log, crash-reports, launcher.log
+  src/updater.rs          # проверка обновлений
 scripts/make-icons.mjs    # генерация иконок (npm run icons)
 ```
 

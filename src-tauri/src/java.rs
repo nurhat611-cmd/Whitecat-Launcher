@@ -1,4 +1,4 @@
-//! Автоопределение Java: встроенный JDK (скачан лаунчером) → JAVA_HOME → PATH → типовые системные каталоги.
+//! Автоопределение Java: встроенный JDK → ручной путь → JAVA_HOME → PATH → типовые системные каталоги.
 
 use crate::JavaInfo;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,36 @@ pub fn java_bin_name() -> &'static str {
 }
 
 pub fn detect_java(app: &AppHandle) -> Result<JavaInfo, String> {
+    // 0. Ручной путь из настроек (приоритет максимальный)
+    if let Ok(settings) = crate::settings::load(app) {
+        if let Some(custom) = settings.java_path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let p = PathBuf::from(custom);
+            // allow both direct binary or directory
+            let candidates = vec![
+                p.clone(),
+                p.join("bin").join(java_bin_name()),
+                PathBuf::from(custom).join(java_bin_name()),
+            ];
+            for cand in candidates {
+                if cand.is_file() {
+                    if let Ok(info) = probe(&cand, "Ручная настройка") {
+                        if info.found {
+                            return Ok(info);
+                        }
+                    }
+                }
+            }
+            // also try if user gave directory containing bin
+            if p.is_dir() {
+                if let Some(found) = find_java(&p) {
+                    if let Ok(info) = probe(&found, "Ручная настройка") {
+                        return Ok(info);
+                    }
+                }
+            }
+        }
+    }
+
     // 1. JDK, установленный самим лаунчером (com.lighty.mylauncher/jdk).
     if let Ok(data) = app.path().app_local_data_dir() {
         let bundled = data.join("jdk");

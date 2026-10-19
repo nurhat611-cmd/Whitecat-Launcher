@@ -1,11 +1,12 @@
 import { motion } from "framer-motion";
-import { Boxes, Home, Settings, type LucideIcon } from "lucide-react";
+import { Boxes, Home, Settings, Shirt, type LucideIcon } from "lucide-react";
 import type { Tab } from "../types";
 import { CatLogo } from "./CatLogo";
 
 const ITEMS: { id: Tab; label: string; icon: LucideIcon }[] = [
   { id: "home", label: "Главная", icon: Home },
   { id: "content", label: "Контент", icon: Boxes },
+  { id: "skins", label: "Скины", icon: Shirt },
   { id: "settings", label: "Настройки", icon: Settings },
 ];
 
@@ -43,7 +44,7 @@ export function Sidebar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
           );
         })}
       </nav>
-      <div className="sidebar-foot">v0.2.0 · часть 2/4</div>
+      <div className="sidebar-foot">v0.3.0 · часть 3/4</div>
     </aside>
   );
 }

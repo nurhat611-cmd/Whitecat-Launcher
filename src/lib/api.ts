@@ -3,12 +3,15 @@ import type {
   ContentHit,
   ContentVersion,
   DownloadTask,
+  GameLogs,
   InstanceInfo,
   InstallParams,
   JavaInfo,
   LauncherSettings,
   SearchParams,
   SearchResult,
+  SkinInfo,
+  UpdateInfo,
   VersionList,
 } from "../types";
 
@@ -112,6 +115,75 @@ export function removeDownload(id: string): Promise<void> {
 
 export function clearFinishedDownloads(): Promise<void> {
   return invoke<void>("clear_finished_downloads");
+}
+
+/* ---------- 3/4 скины ---------- */
+
+export function getSkinInfo(): Promise<SkinInfo> {
+  if (!isTauri()) {
+    return Promise.resolve({
+      exists: false,
+      path: null,
+      model: "steve",
+      hasCustom: false,
+      previewBase64: null,
+    });
+  }
+  return invoke<SkinInfo>("get_skin_info");
+}
+
+export function saveSkinUrl(url: string, model: string): Promise<SkinInfo> {
+  return invoke<SkinInfo>("save_skin_url", { url, model });
+}
+
+export function saveSkinFile(base64Data: string, filename: string | null, model: string): Promise<SkinInfo> {
+  return invoke<SkinInfo>("save_skin_file", { base64Data, filename, model });
+}
+
+export function deleteSkin(): Promise<SkinInfo> {
+  return invoke<SkinInfo>("delete_skin_cmd");
+}
+
+export function openSkinsFolder(): Promise<string> {
+  return invoke<string>("open_skins_folder_cmd");
+}
+
+/* ---------- 3/4 логи / ошибки ---------- */
+
+export function getGameLogs(): Promise<GameLogs> {
+  if (!isTauri()) {
+    return Promise.resolve({
+      launcherLog: "Логи доступны только в приложении Tauri",
+      launcherLogPath: null,
+      latestLog: null,
+      latestLogPath: null,
+      crashReports: [],
+      gameDir: "(браузерный режим)",
+    });
+  }
+  return invoke<GameLogs>("get_game_logs");
+}
+
+export function openLogsFolder(kind?: string): Promise<string> {
+  return invoke<string>("open_logs_folder", { kind: kind ?? null });
+}
+
+export function openGameFolder(): Promise<string> {
+  return invoke<string>("open_game_folder");
+}
+
+export function checkForUpdates(force?: boolean): Promise<UpdateInfo> {
+  if (!isTauri()) {
+    return Promise.resolve({
+      currentVersion: "0.3.0",
+      latestVersion: "0.3.0",
+      hasUpdate: false,
+      checkedAt: Math.floor(Date.now() / 1000),
+      changelog: "Браузерный режим — проверка обновлений недоступна",
+      downloadUrl: null,
+    });
+  }
+  return invoke<UpdateInfo>("check_for_updates", { force: force ?? null });
 }
 
 /* ---------- браузерный режим (предпросмотр без Tauri) ---------- */

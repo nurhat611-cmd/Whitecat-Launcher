@@ -15,7 +15,25 @@ pub fn load(app: &AppHandle) -> Result<LauncherSettings, String> {
         return Ok(LauncherSettings::default());
     }
     let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&text).map_err(|e| format!("Файл настроек повреждён: {e}"))
+    // try to parse; if missing fields, fill defaults via serde
+    match serde_json::from_str::<LauncherSettings>(&text) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            // try merging with default for backward compatibility
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                let mut def = serde_json::to_value(LauncherSettings::default()).unwrap();
+                if let (Some(def_obj), Some(val_obj)) = (def.as_object_mut(), value.as_object()) {
+                    for (k, v) in val_obj {
+                        def_obj.insert(k.clone(), v.clone());
+                    }
+                    if let Ok(merged) = serde_json::from_value::<LauncherSettings>(def) {
+                        return Ok(merged);
+                    }
+                }
+            }
+            Err(format!("Файл настроек повреждён: {e}"))
+        }
+    }
 }
 
 pub fn save(app: &AppHandle, settings: &LauncherSettings) -> Result<(), String> {

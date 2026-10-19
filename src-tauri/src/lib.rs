@@ -6,18 +6,35 @@
 //! Часть 2/4: список версий Mojang (piston-meta) с кешем и фоновым обновлением,
 //! многопоточное скачивание игры с прогрессом, поиск и установка контента из
 //! Modrinth (моды, ресурспаки, шейдеры, сборки .mrpack) через очередь загрузок.
+//!
+//! Часть 3/4: скины (URL/файл, превью Steve/Alex, папка skins), красивый экран настроек
+//! (общие/игра/java/аккаунты/обновления), модальное окно ошибок с парсингом логов.
 
 mod installer;
 mod java;
 mod jdk;
+mod logs;
 mod minecraft;
 mod modrinth;
 mod queue;
 mod settings;
+mod skin;
+mod updater;
 mod versions;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
+
+/// Офлайн-профиль (аккаунт)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineProfile {
+    pub name: String,
+    #[serde(default)]
+    pub uuid: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<u64>,
+}
 
 /// Настройки, управляемые из интерфейса.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +46,39 @@ pub struct LauncherSettings {
     pub loader: String,
     pub ram_gb: u32,
     pub game_dir: Option<String>,
+
+    // --- 3/4 additions ---
+    #[serde(default = "default_language")]
+    pub language: String,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    #[serde(default)]
+    pub jvm_args: String,
+    #[serde(default)]
+    pub java_path: Option<String>,
+    #[serde(default = "default_skin_model")]
+    pub skin_model: String,
+    #[serde(default)]
+    pub skin_url: Option<String>,
+    #[serde(default)]
+    pub skin_path: Option<String>,
+    #[serde(default)]
+    pub profiles: Vec<OfflineProfile>,
+    #[serde(default = "default_auto_update")]
+    pub auto_update: bool,
+}
+
+fn default_language() -> String {
+    "ru".to_string()
+}
+fn default_theme() -> String {
+    "dark".to_string()
+}
+fn default_skin_model() -> String {
+    "steve".to_string()
+}
+fn default_auto_update() -> bool {
+    true
 }
 
 impl Default for LauncherSettings {
@@ -39,6 +89,15 @@ impl Default for LauncherSettings {
             loader: "vanilla".to_string(),
             ram_gb: 4,
             game_dir: None,
+            language: "ru".to_string(),
+            theme: "dark".to_string(),
+            jvm_args: String::new(),
+            java_path: None,
+            skin_model: "steve".to_string(),
+            skin_url: None,
+            skin_path: None,
+            profiles: Vec::new(),
+            auto_update: true,
         }
     }
 }
@@ -118,14 +177,14 @@ pub(crate) fn get_json(url: &str) -> Result<serde_json::Value, String> {
 pub async fn get_java(app: AppHandle) -> Result<JavaInfo, String> {
     tauri::async_runtime::spawn_blocking(move || java::detect_java(&app))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn download_jdk(app: AppHandle) -> Result<JavaInfo, String> {
     tauri::async_runtime::spawn_blocking(move || jdk::download_jdk(&app))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -143,7 +202,7 @@ pub async fn launch_game(app: AppHandle, settings: LauncherSettings) -> Result<u
     let config = settings.clone();
     tauri::async_runtime::spawn_blocking(move || minecraft::launch(&app, &config))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
 }
 
 pub fn run() {
@@ -171,7 +230,17 @@ pub fn run() {
             queue::enqueue_content,
             queue::cancel_download,
             queue::remove_download,
-            queue::clear_finished_downloads
+            queue::clear_finished_downloads,
+            skin::get_skin_info,
+            skin::save_skin_url,
+            skin::save_skin_file,
+            skin::delete_skin_cmd,
+            skin::open_skins_folder_cmd,
+            logs::get_game_logs,
+            logs::open_logs_folder,
+            logs::open_game_folder,
+            logs::get_launcher_log,
+            updater::check_for_updates
         ])
         .run(tauri::generate_context!())
         .expect("error while running MyLauncher");

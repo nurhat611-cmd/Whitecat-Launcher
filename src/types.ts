@@ -1,4 +1,4 @@
-export type Tab = "home" | "content" | "settings";
+export type Tab = "home" | "content" | "skins" | "settings";
 
 export type LoaderId = "vanilla" | "fabric" | "forge";
 
@@ -12,12 +12,61 @@ export interface JavaInfo {
   source: string;
 }
 
+export interface OfflineProfile {
+  name: string;
+  uuid?: string | null;
+  createdAt?: number;
+}
+
 export interface LauncherSettings {
   nickname: string;
   versionId: string;
   loader: LoaderId;
   ramGb: number;
   gameDir: string | null;
+  // 3/4 additions
+  language: string; // ru | en
+  theme: string; // dark | light
+  jvmArgs: string;
+  javaPath: string | null;
+  skinModel: string; // steve | alex
+  skinUrl: string | null;
+  skinPath: string | null;
+  profiles: OfflineProfile[];
+  autoUpdate: boolean;
+}
+
+export interface SkinInfo {
+  exists: boolean;
+  path: string | null;
+  model: string;
+  hasCustom: boolean;
+  previewBase64: string | null;
+}
+
+export interface GameLogs {
+  launcherLog: string | null;
+  launcherLogPath: string | null;
+  latestLog: string | null;
+  latestLogPath: string | null;
+  crashReports: CrashReport[];
+  gameDir: string;
+}
+
+export interface CrashReport {
+  name: string;
+  path: string;
+  content: string;
+  modifiedAt: number;
+}
+
+export interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  checkedAt: number;
+  changelog: string | null;
+  downloadUrl: string | null;
 }
 
 export interface ProgressEvent {
@@ -157,4 +206,45 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   loader: "vanilla",
   ramGb: 4,
   gameDir: null,
+  language: "ru",
+  theme: "dark",
+  jvmArgs: "",
+  javaPath: null,
+  skinModel: "steve",
+  skinUrl: null,
+  skinPath: null,
+  profiles: [],
+  autoUpdate: true,
 };
+
+// Simple i18n
+export const I18N = {
+  ru: {
+    home: "Главная",
+    content: "Контент",
+    skins: "Скины",
+    settings: "Настройки",
+    play: "ИГРАТЬ",
+    downloading: "СКАЧИВАНИЕ…",
+    launching: "ЗАПУСК…",
+    ready: "Готов к запуску",
+    checking: "Инициализация…",
+    javaMissing: "Java не найдена — скачайте JDK во вкладке «Настройки»",
+    needTauri: "Запустите приложение через npm run tauri dev",
+    offlineMode: "Офлайн — вход без аккаунта Mojang",
+  },
+  en: {
+    home: "Home",
+    content: "Content",
+    skins: "Skins",
+    settings: "Settings",
+    play: "PLAY",
+    downloading: "DOWNLOADING…",
+    launching: "LAUNCHING…",
+    ready: "Ready to launch",
+    checking: "Initializing…",
+    javaMissing: "Java not found — download JDK in Settings",
+    needTauri: "Run via npm run tauri dev",
+    offlineMode: "Offline — no Mojang account",
+  },
+} as const;

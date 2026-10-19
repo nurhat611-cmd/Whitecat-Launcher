@@ -182,6 +182,7 @@ pub fn launch(app: &AppHandle, settings: &LauncherSettings) -> Result<u32, Strin
         ram,
         java_major,
         &mc_id,
+        &settings.jvm_args,
     )
 }
 
@@ -559,6 +560,7 @@ fn run_game(
     ram: u32,
     java_major: u32,
     mc_version: &str,
+    extra_jvm: &str,
 ) -> Result<u32, String> {
     let ctx = RulesContext {
         java_major,
@@ -647,6 +649,14 @@ fn run_game(
     let mut args: Vec<String> = Vec::new();
     args.push(format!("-Xms{}G", (ram / 2).max(1)));
     args.push(format!("-Xmx{ram}G"));
+    // Пользовательские JVM-аргументы из настроек
+    if !extra_jvm.trim().is_empty() {
+        for arg in split_jvm_args(extra_jvm) {
+            if !arg.is_empty() {
+                args.push(arg);
+            }
+        }
+    }
 
     let jvm_items = profile
         .get("arguments")
@@ -688,6 +698,9 @@ fn run_game(
     }
 
     emit_event(app, EVENT, "launch", "Запускаем игру…", 95);
+    // Создаём лог-папку и файл
+    let logs_dir = game.join("logs");
+    let _ = fs::create_dir_all(&logs_dir);
     let log = fs::File::create(game.join("launcher.log"))
         .map_err(|e| format!("Не удалось открыть файл launcher.log: {e}"))?;
     let log_err = log.try_clone().map_err(|e| e.to_string())?;
@@ -696,11 +709,28 @@ fn run_game(
     command.current_dir(game);
     command.stdout(Stdio::from(log));
     command.stderr(Stdio::from(log_err));
-    let child = command
+    let mut child = command
         .spawn()
         .map_err(|e| format!("Не удалось запустить Java: {e}"))?;
     let pid = child.id();
-    // Игра продолжает работать независимо от лаунчера.
+    // Быстрая проверка: если процесс упал за 2.5 сек — вернём ошибку с подсказкой про логи
+    for _ in 0..25 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let code = status.code().unwrap_or(-1);
+                // читаем хвост latest.log для контекста
+                let hint = read_crash_hint(game);
+                return Err(format!(
+                    "Игра завершилась сразу после запуска (код {code}). {hint} Откройте логи: {}",
+                    game.join("logs").display()
+                ));
+            }
+            Ok(None) => continue,
+            Err(_) => break,
+        }
+    }
+    // Игра продолжает работать независимо от лаунчера — отсоединяем
     drop(child);
     Ok(pid)
 }
@@ -836,6 +866,78 @@ fn extract_jar_to_natives(jar: &Path, dest: &Path, exclude: Option<&[String]>) -
         std::io::copy(&mut entry, &mut out_file).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+// ---------- утилиты ----------
+
+fn split_jvm_args(input: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '"';
+    for ch in input.chars() {
+        if in_quotes {
+            if ch == quote_char {
+                in_quotes = false;
+            } else {
+                cur.push(ch);
+            }
+        } else if ch == '"' || ch == '\'' {
+            in_quotes = true;
+            quote_char = ch;
+        } else if ch.is_whitespace() {
+            if !cur.is_empty() {
+                args.push(cur.clone());
+                cur.clear();
+            }
+        } else {
+            cur.push(ch);
+        }
+    }
+    if !cur.is_empty() {
+        args.push(cur);
+    }
+    args
+}
+
+fn read_crash_hint(game: &Path) -> String {
+    // пробуем достать последнюю ошибку из latest.log и crash-reports
+    let latest = game.join("logs").join("latest.log");
+    if latest.exists() {
+        if let Ok(text) = fs::read_to_string(&latest) {
+            for line in text.lines().rev().take(40) {
+                if line.contains("Exception") || line.contains("ERROR") || line.contains("Caused by") {
+                    return format!("Подсказка: {line}");
+                }
+            }
+        }
+    }
+    let crash = game.join("crash-reports");
+    if crash.exists() {
+        if let Ok(entries) = fs::read_dir(&crash) {
+            let mut latest_file: Option<PathBuf> = None;
+            let mut latest_time = std::time::SystemTime::UNIX_EPOCH;
+            for p in entries.filter_map(|e| e.ok().map(|e| e.path())) {
+                if let Ok(meta) = fs::metadata(&p) {
+                    if let Ok(t) = meta.modified() {
+                        if t > latest_time {
+                            latest_time = t;
+                            latest_file = Some(p);
+                        }
+                    }
+                }
+            }
+            if let Some(p) = latest_file {
+                if let Ok(text) = fs::read_to_string(&p) {
+                    let first = text.lines().find(|l| l.contains("Description") || l.contains("Exception")).unwrap_or("");
+                    if !first.is_empty() {
+                        return format!("См. crash-report: {} — {first}", p.display());
+                    }
+                }
+            }
+        }
+    }
+    "Проверьте логи — кнопка «Открыть папку с логами» в окне ошибки.".to_string()
 }
 
 // ---------- офлайн-аутентификация ----------

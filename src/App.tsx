@@ -9,7 +9,7 @@ import type {
   Tab,
   VersionList,
 } from "./types";
-import { DEFAULT_SETTINGS } from "./types";
+import { DEFAULT_SETTINGS, I18N } from "./types";
 import {
   downloadJdk,
   enqueueVersion,
@@ -26,6 +26,8 @@ import { Sidebar } from "./components/Sidebar";
 import { HomeTab } from "./components/HomeTab";
 import { ContentTab } from "./components/ContentTab";
 import { SettingsTab } from "./components/SettingsTab";
+import { SkinsTab } from "./components/SkinsTab";
+import { ErrorModal } from "./components/ErrorModal";
 
 type Tone = "ok" | "warn" | "err" | "busy" | "idle";
 
@@ -38,6 +40,7 @@ export default function App() {
   const [launch, setLaunch] = useState<ProgressEvent | null>(null);
   const [gamePid, setGamePid] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showErrorModal, setShowErrorModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [versions, setVersions] = useState<VersionList | null>(null);
   const [versionsLoading, setVersionsLoading] = useState(false);
@@ -49,6 +52,16 @@ export default function App() {
     const timer = setTimeout(() => setSplash(false), 2000);
     return () => clearTimeout(timer);
   }, []);
+
+  // theme apply instantly
+  useEffect(() => {
+    const root = document.documentElement;
+    if (settings.theme === "light") {
+      root.setAttribute("data-theme", "light");
+    } else {
+      root.setAttribute("data-theme", "dark");
+    }
+  }, [settings.theme]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -90,12 +103,16 @@ export default function App() {
         ]);
         if (!disposed) {
           setJava(javaInfo);
+          // merge saved over default to avoid missing fields
           setSettings((prev) => ({ ...prev, ...saved }));
           if (versionList) setVersions(versionList);
           setQueue(queueList);
         }
       } catch (e) {
-        if (!disposed) setError(String(e));
+        if (!disposed) {
+          setError(String(e));
+          setShowErrorModal(true);
+        }
       } finally {
         if (!disposed) setLoading(false);
       }
@@ -106,7 +123,7 @@ export default function App() {
     };
   }, []);
 
-  // Автосохранение настроек (debounce).
+  // Автосохранение настроек (debounce) — применяется сразу без перезагрузки.
   useEffect(() => {
     if (!isTauri() || loading) return;
     const timer = setTimeout(() => {
@@ -117,7 +134,8 @@ export default function App() {
 
   const patch = useCallback((part: Partial<LauncherSettings>) => {
     setSettings((prev) => ({ ...prev, ...part }));
-    setError(null);
+    // не сбрасываем ошибку модалки если это не критично — но для чистоты сбросим только для не-модальных
+    // setError(null);
   }, []);
 
   const refreshJava = useCallback(async () => {
@@ -127,6 +145,7 @@ export default function App() {
       setError(null);
     } catch (e) {
       setError(String(e));
+      setShowErrorModal(true);
     }
   }, []);
 
@@ -137,6 +156,7 @@ export default function App() {
       setVersions(await getVersions(true));
     } catch (e) {
       setError(String(e));
+      setShowErrorModal(true);
     } finally {
       setVersionsLoading(false);
     }
@@ -153,12 +173,14 @@ export default function App() {
     } catch (e) {
       setJdk(null);
       setError(String(e));
+      setShowErrorModal(true);
     }
   }, []);
 
   const onDownloadVersion = useCallback(async (versionId: string, loader: string) => {
     if (!isTauri()) {
       setError("Скачивание работает в приложении: запустите npm run tauri dev");
+      setShowErrorModal(true);
       return;
     }
     try {
@@ -166,6 +188,7 @@ export default function App() {
       setError(null);
     } catch (e) {
       setError(String(e));
+      setShowErrorModal(true);
     }
   }, []);
 
@@ -182,6 +205,7 @@ export default function App() {
     if (launchingRef.current) return;
     if (!isTauri()) {
       setError("Запустите приложение через npm run tauri dev, чтобы подключить Rust-бэкенд");
+      setShowErrorModal(true);
       return;
     }
     setError(null);
@@ -195,13 +219,16 @@ export default function App() {
     } catch (e) {
       setLaunch(null);
       setError(String(e));
+      setShowErrorModal(true);
     } finally {
       launchingRef.current = false;
     }
   }, [settings]);
 
   let status: { text: string; tone: Tone; percent?: number };
-  if (error) status = { text: error, tone: "err" };
+  const lang = settings.language === "en" ? "en" : "ru";
+  const t = I18N[lang];
+  if (error && !showErrorModal) status = { text: error, tone: "err" };
   else if (busy && launch) status = { text: launch.message, tone: "busy", percent: launch.percent };
   else if (activeTask)
     status = {
@@ -212,11 +239,13 @@ export default function App() {
   else if (launch?.stage === "done")
     status = { text: `Игра запущена${gamePid ? ` · PID ${gamePid}` : ""}`, tone: "ok" };
   else if (jdk) status = { text: `${jdk.message} · ${jdk.percent}%`, tone: "busy" };
-  else if (loading) status = { text: "Инициализация…", tone: "idle" };
-  else if (!isTauri()) status = { text: "Запустите приложение через npm run tauri dev", tone: "warn" };
+  else if (loading) status = { text: t.checking, tone: "idle" };
+  else if (!isTauri()) status = { text: t.needTauri, tone: "warn" };
   else if (!java?.found)
-    status = { text: "Java не найдена — скачайте JDK во вкладке «Настройки»", tone: "warn" };
-  else status = { text: "Готов к запуску", tone: "ok" };
+    status = { text: t.javaMissing, tone: "warn" };
+  else status = { text: t.ready, tone: "ok" };
+
+  // show error modal also for busy error? we keep banner as well but modal is primary for launch errors
 
   return (
     <>
@@ -250,6 +279,9 @@ export default function App() {
                 {tab === "content" && (
                   <ContentTab versions={versions} settings={settings} queue={queue} />
                 )}
+                {tab === "skins" && (
+                  <SkinsTab skinModelGlobal={settings.skinModel} onModelChange={(m) => patch({ skinModel: m })} />
+                )}
                 {tab === "settings" && (
                   <SettingsTab
                     settings={settings}
@@ -270,10 +302,10 @@ export default function App() {
               disabled={busy || downloadingVersion || (jdk !== null && jdk.stage !== "done")}
             >
               {busy
-                ? (launch?.message ?? "ЗАПУСК…").toUpperCase()
+                ? (launch?.message ?? t.launching).toUpperCase()
                 : downloadingVersion
-                  ? "СКАЧИВАНИЕ…"
-                  : "ИГРАТЬ"}
+                  ? t.downloading
+                  : t.play}
             </button>
             <div className={`status-bar tone-${status.tone}`}>
               <span className="status-dot" aria-hidden />
@@ -285,6 +317,20 @@ export default function App() {
           </div>
         </main>
       </div>
+
+      <ErrorModal
+        open={showErrorModal && !!error}
+        title={lang === "en" ? "Game crashed or failed to start" : "Игра вылетела или не запустилась"}
+        message={error ?? ""}
+        onClose={() => setShowErrorModal(false)}
+      />
+
+      {/* clickable error banner to reopen modal */}
+      {error && !showErrorModal && (
+        <button className="error-reopen" onClick={() => setShowErrorModal(true)} title="Открыть окно ошибки">
+          !
+        </button>
+      )}
     </>
   );
 }
