@@ -1,0 +1,33 @@
+[package]
+name = "lighty-launcher"
+version = "0.1.0"
+description = "MyLauncher — offline Minecraft launcher backend (lighty-launcher)"
+authors = ["nurhat611"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "lighty_launcher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
+md5 = "0.7"
+sha1 = "0.10"
+which = "6"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

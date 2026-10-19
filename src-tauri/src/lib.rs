@@ -1,0 +1,139 @@
+//! MyLauncher — бэкенд (lighty-launcher).
+//! Часть 1/4: офлайн-запуск Minecraft (без аккаунта Mojang), автоопределение Java,
+//! скачивание JDK с прогрессом, полный пайплайн установки клиента (Vanilla + Fabric).
+
+mod java;
+mod jdk;
+mod minecraft;
+mod settings;
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
+
+/// Настройки, управляемые из интерфейса.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherSettings {
+    pub nickname: String,
+    pub version_id: String,
+    /// "vanilla" | "fabric" | "forge"
+    pub loader: String,
+    pub ram_gb: u32,
+    pub game_dir: Option<String>,
+}
+
+impl Default for LauncherSettings {
+    fn default() -> Self {
+        Self {
+            nickname: String::new(),
+            version_id: "1.21.4".to_string(),
+            loader: "vanilla".to_string(),
+            ram_gb: 4,
+            game_dir: None,
+        }
+    }
+}
+
+/// Результат автоопределения Java.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaInfo {
+    pub found: bool,
+    pub path: Option<String>,
+    /// Первая строка `java -version`, например `openjdk version "21.0.5" 2024-10-15`.
+    pub version: Option<String>,
+    /// Крупная версия: 21, 17, 8…
+    pub major: Option<u32>,
+    /// Откуда нашли: «Встроенный JDK», `JAVA_HOME`, `PATH`, «Системная установка».
+    pub source: String,
+}
+
+/// Событие прогресса (jdk_progress / launch_progress).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressEvent {
+    pub stage: String,
+    pub message: String,
+    pub percent: u32,
+}
+
+/// Имя ОС в формате манифестов Mojang.
+pub fn os_name() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "osx"
+    } else {
+        "linux"
+    }
+}
+
+pub(crate) fn emit_event(
+    app: &AppHandle,
+    event: &str,
+    stage: &str,
+    message: impl Into<String>,
+    percent: u32,
+) {
+    let payload = ProgressEvent {
+        stage: stage.to_string(),
+        message: message.into(),
+        percent,
+    };
+    let _ = app.emit(event, payload);
+}
+
+pub(crate) fn get_json(url: &str) -> Result<serde_json::Value, String> {
+    let response = reqwest::blocking::get(url).map_err(|e| format!("Сетевая ошибка: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Сервер вернул статус {}", response.status()));
+    }
+    response
+        .json::<serde_json::Value>()
+        .map_err(|e| format!("Некорректный JSON: {e}"))
+}
+
+#[tauri::command]
+pub async fn get_java(app: AppHandle) -> Result<JavaInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || java::detect_java(&app))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn download_jdk(app: AppHandle) -> Result<JavaInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || jdk::download_jdk(&app))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn load_settings(app: AppHandle) -> Result<LauncherSettings, String> {
+    Ok(settings::load(&app)?)
+}
+
+#[tauri::command]
+pub async fn save_settings(app: AppHandle, settings: LauncherSettings) -> Result<(), String> {
+    crate::settings::save(&app, &settings)
+}
+
+#[tauri::command]
+pub async fn launch_game(app: AppHandle, settings: LauncherSettings) -> Result<u32, String> {
+    let config = settings.clone();
+    tauri::async_runtime::spawn_blocking(move || minecraft::launch(&app, &config))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            get_java,
+            download_jdk,
+            load_settings,
+            save_settings,
+            launch_game
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running MyLauncher");
+}
