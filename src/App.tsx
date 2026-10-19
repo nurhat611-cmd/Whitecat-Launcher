@@ -1,9 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
-import type { JavaInfo, LauncherSettings, ProgressEvent, Tab } from "./types";
+import type {
+  DownloadTask,
+  JavaInfo,
+  LauncherSettings,
+  ProgressEvent,
+  Tab,
+  VersionList,
+} from "./types";
 import { DEFAULT_SETTINGS } from "./types";
-import { downloadJdk, getJava, isTauri, launchGame, loadSettings, saveSettings } from "./lib/api";
+import {
+  downloadJdk,
+  enqueueVersion,
+  getDownloadQueue,
+  getJava,
+  getVersions,
+  isTauri,
+  launchGame,
+  loadSettings,
+  saveSettings,
+} from "./lib/api";
 import { Splash } from "./components/Splash";
 import { Sidebar } from "./components/Sidebar";
 import { HomeTab } from "./components/HomeTab";
@@ -22,6 +39,9 @@ export default function App() {
   const [gamePid, setGamePid] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [versions, setVersions] = useState<VersionList | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [queue, setQueue] = useState<DownloadTask[]>([]);
   const launchingRef = useRef(false);
 
   // Splash-экран живёт ровно 2 секунды, после чего плавно растворяется.
@@ -36,8 +56,7 @@ export default function App() {
       return;
     }
     let disposed = false;
-    let unlistenJdk: (() => void) | undefined;
-    let unlistenLaunch: (() => void) | undefined;
+    const unlisteners: (() => void)[] = [];
     (async () => {
       const offJdk = await listen<ProgressEvent>("jdk_progress", (e) => {
         if (!disposed) setJdk(e.payload);
@@ -45,18 +64,35 @@ export default function App() {
       const offLaunch = await listen<ProgressEvent>("launch_progress", (e) => {
         if (!disposed) setLaunch(e.payload);
       });
+      // Фоновое обновление манифеста Mojang приходит отдельным событием.
+      const offVersions = await listen<VersionList>("versions_updated", (e) => {
+        if (!disposed) setVersions(e.payload);
+      });
+      // Очередь загрузок присылает полный снимок после каждого изменения.
+      const offQueue = await listen<DownloadTask[]>("download_queue", (e) => {
+        if (!disposed) setQueue(e.payload);
+      });
       if (disposed) {
         offJdk();
         offLaunch();
+        offVersions();
+        offQueue();
         return;
       }
-      unlistenJdk = offJdk;
-      unlistenLaunch = offLaunch;
+      unlisteners.push(offJdk, offLaunch, offVersions, offQueue);
+
       try {
-        const [javaInfo, saved] = await Promise.all([getJava(), loadSettings()]);
+        const [javaInfo, saved, versionList, queueList] = await Promise.all([
+          getJava(),
+          loadSettings(),
+          getVersions(false).catch(() => null),
+          getDownloadQueue().catch(() => [] as DownloadTask[]),
+        ]);
         if (!disposed) {
           setJava(javaInfo);
           setSettings((prev) => ({ ...prev, ...saved }));
+          if (versionList) setVersions(versionList);
+          setQueue(queueList);
         }
       } catch (e) {
         if (!disposed) setError(String(e));
@@ -66,8 +102,7 @@ export default function App() {
     })();
     return () => {
       disposed = true;
-      unlistenJdk?.();
-      unlistenLaunch?.();
+      unlisteners.forEach((off) => off());
     };
   }, []);
 
@@ -95,6 +130,18 @@ export default function App() {
     }
   }, []);
 
+  const refreshVersions = useCallback(async () => {
+    if (!isTauri()) return;
+    setVersionsLoading(true);
+    try {
+      setVersions(await getVersions(true));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setVersionsLoading(false);
+    }
+  }, []);
+
   const onDownloadJdk = useCallback(async () => {
     if (!isTauri()) return;
     setError(null);
@@ -109,7 +156,27 @@ export default function App() {
     }
   }, []);
 
+  const onDownloadVersion = useCallback(async (versionId: string, loader: string) => {
+    if (!isTauri()) {
+      setError("Скачивание работает в приложении: запустите npm run tauri dev");
+      return;
+    }
+    try {
+      await enqueueVersion(versionId, loader);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   const busy = launch !== null && launch.stage !== "done";
+  const activeTask =
+    queue.find((task) => task.status === "running") ??
+    queue.find((task) => task.status === "queued");
+  const downloadingVersion = queue.some(
+    (task) =>
+      task.kind === "version" && (task.status === "running" || task.status === "queued"),
+  );
 
   const play = useCallback(async () => {
     if (launchingRef.current) return;
@@ -133,9 +200,15 @@ export default function App() {
     }
   }, [settings]);
 
-  let status: { text: string; tone: Tone };
+  let status: { text: string; tone: Tone; percent?: number };
   if (error) status = { text: error, tone: "err" };
-  else if (busy && launch) status = { text: launch.message, tone: "busy" };
+  else if (busy && launch) status = { text: launch.message, tone: "busy", percent: launch.percent };
+  else if (activeTask)
+    status = {
+      text: `${activeTask.title} · ${activeTask.progress.currentFile || activeTask.progress.message}`,
+      tone: "busy",
+      percent: activeTask.progress.percent,
+    };
   else if (launch?.stage === "done")
     status = { text: `Игра запущена${gamePid ? ` · PID ${gamePid}` : ""}`, tone: "ok" };
   else if (jdk) status = { text: `${jdk.message} · ${jdk.percent}%`, tone: "busy" };
@@ -167,9 +240,16 @@ export default function App() {
                     onPatch={patch}
                     java={java}
                     onRefreshJava={refreshJava}
+                    versions={versions}
+                    versionsLoading={versionsLoading}
+                    onRefreshVersions={refreshVersions}
+                    queue={queue}
+                    onDownloadVersion={onDownloadVersion}
                   />
                 )}
-                {tab === "content" && <ContentTab />}
+                {tab === "content" && (
+                  <ContentTab versions={versions} settings={settings} queue={queue} />
+                )}
                 {tab === "settings" && (
                   <SettingsTab
                     settings={settings}
@@ -187,14 +267,20 @@ export default function App() {
             <button
               className={`play-btn${busy ? " playing" : ""}`}
               onClick={play}
-              disabled={busy || (jdk !== null && jdk.stage !== "done")}
+              disabled={busy || downloadingVersion || (jdk !== null && jdk.stage !== "done")}
             >
-              {busy ? (launch?.message ?? "ЗАПУСК…").toUpperCase() : "ИГРАТЬ"}
+              {busy
+                ? (launch?.message ?? "ЗАПУСК…").toUpperCase()
+                : downloadingVersion
+                  ? "СКАЧИВАНИЕ…"
+                  : "ИГРАТЬ"}
             </button>
             <div className={`status-bar tone-${status.tone}`}>
               <span className="status-dot" aria-hidden />
               <span className="status-text">{status.text}</span>
-              {busy && <span className="status-pct">{launch?.percent ?? 0}%</span>}
+              {status.percent !== undefined && (
+                <span className="status-pct">{status.percent}%</span>
+              )}
             </div>
           </div>
         </main>

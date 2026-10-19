@@ -23,3 +23,23 @@ pub fn save(app: &AppHandle, settings: &LauncherSettings) -> Result<(), String> 
     let text = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     fs::write(&path, text).map_err(|e| format!("Не удалось сохранить настройки: {e}"))
 }
+
+/// Папка игры: из настроек, иначе стандартная папка данных приложения.
+pub fn game_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let settings = load(app)?;
+    let dir = match settings
+        .game_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(path) => PathBuf::from(path),
+        None => app
+            .path()
+            .app_local_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("minecraft"),
+    };
+    fs::create_dir_all(&dir).map_err(|e| format!("Не удалось создать папку игры: {e}"))?;
+    Ok(dir)
+}

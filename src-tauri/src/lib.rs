@@ -1,14 +1,23 @@
 //! MyLauncher — бэкенд (lighty-launcher).
+//!
 //! Часть 1/4: офлайн-запуск Minecraft (без аккаунта Mojang), автоопределение Java,
 //! скачивание JDK с прогрессом, полный пайплайн установки клиента (Vanilla + Fabric).
+//!
+//! Часть 2/4: список версий Mojang (piston-meta) с кешем и фоновым обновлением,
+//! многопоточное скачивание игры с прогрессом, поиск и установка контента из
+//! Modrinth (моды, ресурспаки, шейдеры, сборки .mrpack) через очередь загрузок.
 
+mod installer;
 mod java;
 mod jdk;
 mod minecraft;
+mod modrinth;
+mod queue;
 mod settings;
+mod versions;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Настройки, управляемые из интерфейса.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,14 +92,26 @@ pub(crate) fn emit_event(
     let _ = app.emit(event, payload);
 }
 
-pub(crate) fn get_json(url: &str) -> Result<serde_json::Value, String> {
-    let response = reqwest::blocking::get(url).map_err(|e| format!("Сетевая ошибка: {e}"))?;
+/// GET-запрос JSON с User-Agent лаунчера (его требуют Mojang и Modrinth).
+pub(crate) fn http_json(url: &str) -> Result<serde_json::Value, String> {
+    let client = installer::http_client()?;
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|e| format!("Сетевая ошибка: {e}"))?;
     if !response.status().is_success() {
-        return Err(format!("Сервер вернул статус {}", response.status()));
+        return Err(format!(
+            "Сервер вернул статус {} для {url}",
+            response.status()
+        ));
     }
     response
         .json::<serde_json::Value>()
         .map_err(|e| format!("Некорректный JSON: {e}"))
+}
+
+pub(crate) fn get_json(url: &str) -> Result<serde_json::Value, String> {
+    http_json(url)
 }
 
 #[tauri::command]
@@ -127,12 +148,30 @@ pub async fn launch_game(app: AppHandle, settings: LauncherSettings) -> Result<u
 
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            let handle = app.handle().clone();
+            // Фоновое обновление списка версий + кеш на диске.
+            versions::spawn_background_refresh(handle.clone());
+            // Очередь загрузок живёт всё время работы приложения.
+            app.manage(queue::DownloadQueue::start(handle));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_java,
             download_jdk,
             load_settings,
             save_settings,
-            launch_game
+            launch_game,
+            versions::get_versions,
+            modrinth::search_content,
+            modrinth::get_content_versions,
+            modrinth::list_instances,
+            queue::get_download_queue,
+            queue::enqueue_version,
+            queue::enqueue_content,
+            queue::cancel_download,
+            queue::remove_download,
+            queue::clear_finished_downloads
         ])
         .run(tauri::generate_context!())
         .expect("error while running MyLauncher");
