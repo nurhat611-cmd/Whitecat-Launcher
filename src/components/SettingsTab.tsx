@@ -130,7 +130,7 @@ export function SettingsTab({
           </div>
           <div className="sys-row">
             <span className="sys-label">Версия</span>
-            <span className="sys-value">0.1.0 (часть 1/4)</span>
+            <span className="sys-value">0.2.0 (часть 2/4)</span>
           </div>
           <div className="sys-row">
             <span className="sys-label">Режим</span>
@@ -139,8 +139,16 @@ export function SettingsTab({
           <div className="sys-row">
             <span className="sys-label">Загрузка</span>
             <span className="sys-value">
-              Vanilla и Fabric · Forge — в 2-й части
+              Vanilla и Fabric · Forge — в следующей части
             </span>
+          </div>
+          <div className="sys-row">
+            <span className="sys-label">Контент</span>
+            <span className="sys-value">Modrinth: моды, ресурспаки, шейдеры, сборки</span>
+          </div>
+          <div className="sys-row">
+            <span className="sys-label">Файлы</span>
+            <span className="sys-value">Параллельно · 8 потоков · проверка SHA-1</span>
           </div>
           <div className="sys-row">
             <span className="sys-label">Стек</span>

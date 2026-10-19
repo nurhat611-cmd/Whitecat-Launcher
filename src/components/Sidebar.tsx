@@ -43,7 +43,7 @@ export function Sidebar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
           );
         })}
       </nav>
-      <div className="sidebar-foot">v0.1.0 · часть 1/4</div>
+      <div className="sidebar-foot">v0.2.0 · часть 2/4</div>
     </aside>
   );
 }

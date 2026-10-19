@@ -1,6 +1,6 @@
 [package]
 name = "lighty-launcher"
-version = "0.1.0"
+version = "0.2.0"
 description = "MyLauncher — offline Minecraft launcher backend (lighty-launcher)"
 authors = ["nurhat611"]
 edition = "2021"
