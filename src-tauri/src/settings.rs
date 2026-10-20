@@ -36,9 +36,9 @@ pub fn game_dir(app: &AppHandle) -> Result<PathBuf, String> {
         Some(path) => PathBuf::from(path),
         None => app
             .path()
-            .app_local_data_dir()
+            .app_data_dir()
             .map_err(|e| e.to_string())?
-            .join("minecraft"),
+            .join("Whitecat Launcher"),
     };
     fs::create_dir_all(&dir).map_err(|e| format!("Не удалось создать папку игры: {e}"))?;
     Ok(dir)
