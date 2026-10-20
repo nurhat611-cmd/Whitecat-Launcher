@@ -1,0 +1,77 @@
+name: Rust check (diagnostics)
+
+on:
+  push:
+    branches:
+      - "arena/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run cargo check
+        id: check
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          cargo check --manifest-path src-tauri/Cargo.toml --message-format=short 2>&1 |
+            Tee-Object -FilePath cargo-check.log
+          exit $LASTEXITCODE
+
+      - name: Publish diagnostics
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $log = Get-Content cargo-check.log -Raw -ErrorAction SilentlyContinue
+          if ([string]::IsNullOrWhiteSpace($log)) {
+            $log = "cargo check did not produce any output"
+          }
+          $max = 60000
+          if ($log.Length -gt $max) {
+            $log = "...(truncated)...`n" + $log.Substring($log.Length - $max)
+          }
+          $payload = @{
+            name       = "cargo check diagnostics"
+            head_sha   = $env:GITHUB_SHA
+            status     = "completed"
+            conclusion = "neutral"
+            output     = @{
+              title   = "cargo check output"
+              summary = "Output of cargo check --message-format=short"
+              text    = $log
+            }
+          } | ConvertTo-Json -Depth 6
+          $payload | Out-File -FilePath payload.json -Encoding utf8
+          gh api "repos/$env:GITHUB_REPOSITORY/check-runs" --method POST --input payload.json
+
+      - name: Fail when compiler reports errors
+        if: steps.check.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Write-Host "cargo check failed - see the 'cargo check diagnostics' check run."
+          exit 1

@@ -8,7 +8,7 @@ use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -515,7 +515,7 @@ fn ensure_assets(
             ));
         }
     } else {
-        return Err("Пустой или неизвестный формат индекса ассетов");
+        return Err("Пустой или неизвестный формат индекса ассетов".to_string());
     }
     assets.sort();
 
@@ -684,7 +684,7 @@ fn run_game(
             args.push(substitute(token, &props));
         }
     } else {
-        return Err("В описании версии нет игровых аргументов");
+        return Err("В описании версии нет игровых аргументов".to_string());
     }
 
     emit_event(app, EVENT, "launch", "Запускаем игру…", 95);
@@ -708,7 +708,12 @@ fn run_game(
 /// Строка/объект-аргумент из "arguments" → список готовых аргументов.
 fn eval_items(items: &Value, ctx: &RulesContext, props: &BTreeMap<String, String>) -> Vec<String> {
     let mut out = Vec::new();
-    for item in items.as_array().iter() {
+    // `as_array` возвращает Option<&Vec<Value>>: разворачиваем его, иначе `item`
+    // получает тип &Vec<Value> и методы Value (as_str/get) не работают.
+    let Some(list) = items.as_array() else {
+        return out;
+    };
+    for item in list {
         if let Some(s) = item.as_str() {
             out.push(substitute(s, props));
             continue;
@@ -773,20 +778,37 @@ fn download_file(
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let response =
+    let mut response =
         reqwest::blocking::get(url).map_err(|e| format!("Сбой сети при загрузке {url}: {e}"))?;
     if !response.status().is_success() {
         return Err(format!("Сервер вернул статус {} для {url}", response.status()));
     }
-    let total = size_expected.or_else(response.content_length);
-    let mut file = fs::File::create(dest).map_err(|e| format!("Не удалось создать {dest:?}: {e}"))?;
+    // content_length — метод, а блокирующий Response — обычный Read (метода chunk() у него нет).
+    let total = size_expected.or_else(|| response.content_length());
+
+    let mut part_name = dest.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    part_name.push(".part");
+    let part = dest.with_file_name(part_name);
+    let mut file = fs::File::create(&part).map_err(|e| format!("Не удалось создать {part:?}: {e}"))?;
     let mut hasher = Sha1::new();
     let mut done: u64 = 0;
-    while let Some(chunk) = response.chunk() {
-        let chunk = chunk.map_err(|e| format!("Сбой сети: {e}"))?;
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
-        hasher.update(&chunk);
-        done += chunk.len() as u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = match response.read(&mut buffer) {
+            Ok(read) => read,
+            Err(e) => {
+                drop(file);
+                let _ = fs::remove_file(&part);
+                return Err(format!("Сбой сети при загрузке {url}: {e}"));
+            }
+        };
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|e| format!("Не удалось записать {part:?}: {e}"))?;
+        hasher.update(&buffer[..read]);
+        done += read as u64;
         if let Some(f) = progress {
             f(done, total);
         }
@@ -796,10 +818,14 @@ fn download_file(
     if let Some(expected) = sha1_expected {
         let got: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
         if got != expected.to_lowercase() {
-            let _ = fs::remove_file(dest);
-            return Err("Файл не прошёл проверку SHA-1 — запустите запуск ещё раз".into());
+            let _ = fs::remove_file(&part);
+            return Err("Файл не прошёл проверку SHA-1 — запустите запуск ещё раз".to_string());
         }
     }
+    if dest.exists() {
+        let _ = fs::remove_file(dest);
+    }
+    fs::rename(&part, dest).map_err(|e| format!("Не удалось сохранить {dest:?}: {e}"))?;
     Ok(dest.to_path_buf())
 }
 

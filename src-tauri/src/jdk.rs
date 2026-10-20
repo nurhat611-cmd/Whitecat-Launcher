@@ -3,7 +3,7 @@
 use crate::java::detect_java;
 use crate::{emit_event, get_json, JavaInfo};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
@@ -41,17 +41,30 @@ pub fn download_jdk(app: &AppHandle) -> Result<JavaInfo, String> {
     emit_event(app, EVENT, "download", "Начинаю загрузку…", 1);
     let archive = work.join(format!("{package_name}.tmp"));
     let mut file = fs::File::create(&archive).map_err(|e| format!("Не удалось создать файл: {e}"))?;
-    let response =
+    let mut response =
         reqwest::blocking::get(&link).map_err(|e| format!("Не удалось начать загрузку JDK: {e}"))?;
     if !response.status().is_success() {
         return Err(format!("Adoptium вернул статус {}", response.status()));
     }
-    let total = total.or_else(response.content_length);
+    // content_length — метод, а у блокирующего Response нет метода chunk(): читаем через Read.
+    let total = total.or_else(|| response.content_length());
     let mut done: u64 = 0;
-    while let Some(chunk) = response.chunk() {
-        let chunk = chunk.map_err(|e| format!("Сбой сети при загрузке JDK: {e}"))?;
-        file.write_all(&chunk).map_err(|e| format!("Ошибка записи: {e}"))?;
-        done += chunk.len() as u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = match response.read(&mut buffer) {
+            Ok(read) => read,
+            Err(e) => {
+                drop(file);
+                let _ = fs::remove_file(&archive);
+                return Err(format!("Сбой сети при загрузке JDK: {e}"));
+            }
+        };
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|e| format!("Ошибка записи: {e}"))?;
+        done += read as u64;
         let percent = match total {
             Some(t) if t > 0 => (1 + (done as f64 / t as f64 * 88.0)) as u32,
             _ => 1,
