@@ -8,7 +8,7 @@ use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -69,7 +69,7 @@ pub fn launch(app: &AppHandle, settings: &LauncherSettings) -> Result<u32, Strin
     let java_path = java_info
         .path
         .clone()
-        .ok_or("Java не найдена. Скачайте JDK во вкладке «Настройки»")?;
+        .ok_or_else(|| "Java не найдена. Скачайте JDK во вкладке «Настройки»".to_string())?;
     let java_major = java_info.major.unwrap_or(21);
 
     emit_event(app, EVENT, "manifest", "Загружаем список версий Minecraft…", 2);
@@ -85,7 +85,7 @@ pub fn launch(app: &AppHandle, settings: &LauncherSettings) -> Result<u32, Strin
             .get(0)
             .and_then(|entry| entry.get("profile"))
             .cloned()
-            .ok_or("Для этой версии нет stable-сборки Fabric")?;
+            .ok_or_else(|| "Для этой версии нет stable-сборки Fabric".to_string())?;
         Some(profile)
     } else {
         None
@@ -116,13 +116,13 @@ pub fn launch(app: &AppHandle, settings: &LauncherSettings) -> Result<u32, Strin
     let client_url = client
         .get("url")
         .and_then(Value::as_str)
-        .ok_or("В манифесте версии нет ссылки на клиент")?
+        .ok_or_else(|| "В манифесте версии нет ссылки на клиент".to_string())?
         .to_string();
     let client_jar = game_dir
         .join("versions")
         .join(&profile_id)
         .join(format!("{profile_id}.jar"));
-    fs::create_dir_all(client_jar.parent().ok_or("Некорректный путь к клиенту")?)
+    fs::create_dir_all(client_jar.parent().ok_or_else(|| "Некорректный путь к клиенту".to_string())?)
         .map_err(|e| e.to_string())?;
     download_file(
         &client_url,
@@ -198,7 +198,7 @@ fn load_vanilla_version(mc_id: &str) -> Result<Value, String> {
     let url = entry
         .get("url")
         .and_then(Value::as_str)
-        .ok_or("Повреждённый манифест версий")?;
+        .ok_or_else(|| "Повреждённый манифест версий".to_string())?;
     get_json(url).map_err(|e| format!("Не удалось загрузить описание версии {mc_id}: {e}"))
 }
 
@@ -237,16 +237,16 @@ fn resolve_library(
             let artifact = lib
                 .get("downloads")
                 .and_then(|d| d.get("artifact"))
-                .ok_or("Нет данных о natives-библиотеке")?;
+                .ok_or_else(|| "Нет данных о natives-библиотеке".to_string())?;
             let url = artifact
                 .get("url")
                 .and_then(Value::as_str)
-                .ok_or("Нет ссылки на natives")?
+                .ok_or_else(|| "Нет ссылки на natives".to_string())?
                 .to_string();
             let rel = artifact
                 .get("path")
                 .and_then(Value::as_str)
-                .ok_or("Нет пути natives-библиотеки")?;
+                .ok_or_else(|| "Нет пути natives-библиотеки".to_string())?;
             let file = download_file(
                 &url,
                 &game.join("libraries").join(rel),
@@ -274,7 +274,7 @@ fn resolve_library(
             let url = entry
                 .get("url")
                 .and_then(Value::as_str)
-                .ok_or("Нет ссылки на natives")?
+                .ok_or_else(|| "Нет ссылки на natives".to_string())?
                 .to_string();
             let rel = entry.get("path").and_then(Value::as_str).unwrap_or(&key);
             let file = download_file(
@@ -317,7 +317,7 @@ fn resolve_library(
         let rel = artifact
             .get("path")
             .and_then(Value::as_str)
-            .ok_or("Нет пути библиотеки")?;
+            .ok_or_else(|| "Нет пути библиотеки".to_string())?;
         let file = download_file(
             url,
             &game.join("libraries").join(rel),
@@ -334,7 +334,7 @@ fn resolve_library(
             .get("url")
             .and_then(Value::as_str)
             .unwrap_or("https://libraries.minecraft.net/");
-        let (url, rel) = maven_coordinates(name, base).ok_or("Некорректные maven-координаты")?;
+        let (url, rel) = maven_coordinates(name, base).ok_or_else(|| "Некорректные maven-координаты".to_string())?;
         let file = download_file(
             &url,
             &game.join("libraries").join(&rel),
@@ -424,7 +424,7 @@ fn rule_matches(rule: &Value, ctx: &RulesContext) -> bool {
     }
     if let Some(mc) = rule.get("minecraft") {
         if let Some(min) = mc.get("greater_than_equal_to").and_then(Value::as_str) {
-            if compare_versions(&ctx.mc_version, min) < 0 {
+            if compare_versions(&ctx.mc_version, min) == std::cmp::Ordering::Less {
                 return false;
             }
         }
@@ -463,16 +463,16 @@ fn ensure_assets(
     let index = profile
         .get("assetIndex")
         .or_else(|| vanilla.get("assetIndex"))
-        .ok_or("Нет данных об индексе ассетов")?;
+        .ok_or_else(|| "Нет данных об индексе ассетов".to_string())?;
     let index_id = index
         .get("id")
         .and_then(Value::as_str)
-        .ok_or("Нет id индекса ассетов")?
+        .ok_or_else(|| "Нет id индекса ассетов".to_string())?
         .to_string();
     let index_url = index
         .get("url")
         .and_then(Value::as_str)
-        .ok_or("Нет ссылки на индекс ассетов")?
+        .ok_or_else(|| "Нет ссылки на индекс ассетов".to_string())?
         .to_string();
     let index_path = game
         .join("assets")
@@ -515,7 +515,7 @@ fn ensure_assets(
             ));
         }
     } else {
-        return Err("Пустой или неизвестный формат индекса ассетов");
+        return Err("Пустой или неизвестный формат индекса ассетов".to_string());
     }
     assets.sort();
 
@@ -574,7 +574,7 @@ fn run_game(
         .join("versions")
         .join(profile_id)
         .join("user_properties.json");
-    let user_props_content = if compare_versions(mc_version, "1.12") >= 0 {
+    let user_props_content = if compare_versions(mc_version, "1.12") != std::cmp::Ordering::Less {
         serde_json::json!({
             "userProperties": {
                 "username": nickname,
@@ -684,7 +684,7 @@ fn run_game(
             args.push(substitute(token, &props));
         }
     } else {
-        return Err("В описании версии нет игровых аргументов");
+        return Err("В описании версии нет игровых аргументов".to_string());
     }
 
     emit_event(app, EVENT, "launch", "Запускаем игру…", 95);
@@ -708,7 +708,12 @@ fn run_game(
 /// Строка/объект-аргумент из "arguments" → список готовых аргументов.
 fn eval_items(items: &Value, ctx: &RulesContext, props: &BTreeMap<String, String>) -> Vec<String> {
     let mut out = Vec::new();
-    for item in items.as_array().iter() {
+    // `as_array` возвращает Option<&Vec<Value>>: разворачиваем его, иначе `item`
+    // получает тип &Vec<Value> и методы Value (as_str/get) не работают.
+    let Some(list) = items.as_array() else {
+        return out;
+    };
+    for item in list {
         if let Some(s) = item.as_str() {
             out.push(substitute(s, props));
             continue;
@@ -773,20 +778,37 @@ fn download_file(
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let response =
+    let mut response =
         reqwest::blocking::get(url).map_err(|e| format!("Сбой сети при загрузке {url}: {e}"))?;
     if !response.status().is_success() {
         return Err(format!("Сервер вернул статус {} для {url}", response.status()));
     }
-    let total = size_expected.or_else(response.content_length);
-    let mut file = fs::File::create(dest).map_err(|e| format!("Не удалось создать {dest:?}: {e}"))?;
+    // content_length — метод, а блокирующий Response — обычный Read (метода chunk() у него нет).
+    let total = size_expected.or_else(|| response.content_length());
+
+    let mut part_name = dest.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    part_name.push(".part");
+    let part = dest.with_file_name(part_name);
+    let mut file = fs::File::create(&part).map_err(|e| format!("Не удалось создать {part:?}: {e}"))?;
     let mut hasher = Sha1::new();
     let mut done: u64 = 0;
-    while let Some(chunk) = response.chunk() {
-        let chunk = chunk.map_err(|e| format!("Сбой сети: {e}"))?;
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
-        hasher.update(&chunk);
-        done += chunk.len() as u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = match response.read(&mut buffer) {
+            Ok(read) => read,
+            Err(e) => {
+                drop(file);
+                let _ = fs::remove_file(&part);
+                return Err(format!("Сбой сети при загрузке {url}: {e}"));
+            }
+        };
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|e| format!("Не удалось записать {part:?}: {e}"))?;
+        hasher.update(&buffer[..read]);
+        done += read as u64;
         if let Some(f) = progress {
             f(done, total);
         }
@@ -796,10 +818,14 @@ fn download_file(
     if let Some(expected) = sha1_expected {
         let got: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
         if got != expected.to_lowercase() {
-            let _ = fs::remove_file(dest);
-            return Err("Файл не прошёл проверку SHA-1 — запустите запуск ещё раз".into());
+            let _ = fs::remove_file(&part);
+            return Err("Файл не прошёл проверку SHA-1 — запустите запуск ещё раз".to_string());
         }
     }
+    if dest.exists() {
+        let _ = fs::remove_file(dest);
+    }
+    fs::rename(&part, dest).map_err(|e| format!("Не удалось сохранить {dest:?}: {e}"))?;
     Ok(dest.to_path_buf())
 }
 
