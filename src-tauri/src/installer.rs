@@ -476,12 +476,12 @@ fn rule_matches(rule: &Value, ctx: &RulesCtx) -> bool {
     }
     if let Some(mc) = rule.get("minecraft") {
         if let Some(min) = mc.get("greater_than_equal_to").and_then(Value::as_str) {
-            if compare_versions(&ctx.mc_version, min) < 0 {
+            if compare_versions(&ctx.mc_version, min) == std::cmp::Ordering::Less {
                 return false;
             }
         }
         if let Some(max) = mc.get("less_than").and_then(Value::as_str) {
-            if compare_versions(&ctx.mc_version, max) >= 0 {
+            if compare_versions(&ctx.mc_version, max) != std::cmp::Ordering::Less {
                 return false;
             }
         }

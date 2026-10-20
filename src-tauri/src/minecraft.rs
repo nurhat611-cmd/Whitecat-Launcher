@@ -424,7 +424,7 @@ fn rule_matches(rule: &Value, ctx: &RulesContext) -> bool {
     }
     if let Some(mc) = rule.get("minecraft") {
         if let Some(min) = mc.get("greater_than_equal_to").and_then(Value::as_str) {
-            if compare_versions(&ctx.mc_version, min) < 0 {
+            if compare_versions(&ctx.mc_version, min) == std::cmp::Ordering::Less {
                 return false;
             }
         }
@@ -574,7 +574,7 @@ fn run_game(
         .join("versions")
         .join(profile_id)
         .join("user_properties.json");
-    let user_props_content = if compare_versions(mc_version, "1.12") >= 0 {
+    let user_props_content = if compare_versions(mc_version, "1.12") != std::cmp::Ordering::Less {
         serde_json::json!({
             "userProperties": {
                 "username": nickname,

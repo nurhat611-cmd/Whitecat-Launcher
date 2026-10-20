@@ -7,6 +7,7 @@
 //! многопоточное скачивание игры с прогрессом, поиск и установка контента из
 //! Modrinth (моды, ресурспаки, шейдеры, сборки .mrpack) через очередь загрузок.
 
+mod commands;
 mod installer;
 mod java;
 mod jdk;
@@ -114,38 +115,6 @@ pub(crate) fn get_json(url: &str) -> Result<serde_json::Value, String> {
     http_json(url)
 }
 
-#[tauri::command]
-pub async fn get_java(app: AppHandle) -> Result<JavaInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || java::detect_java(&app))
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn download_jdk(app: AppHandle) -> Result<JavaInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || jdk::download_jdk(&app))
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn load_settings(app: AppHandle) -> Result<LauncherSettings, String> {
-    Ok(settings::load(&app)?)
-}
-
-#[tauri::command]
-pub async fn save_settings(app: AppHandle, settings: LauncherSettings) -> Result<(), String> {
-    crate::settings::save(&app, &settings)
-}
-
-#[tauri::command]
-pub async fn launch_game(app: AppHandle, settings: LauncherSettings) -> Result<u32, String> {
-    let config = settings.clone();
-    tauri::async_runtime::spawn_blocking(move || minecraft::launch(&app, &config))
-        .await
-        .map_err(|e| e.to_string())
-}
-
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -159,11 +128,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_java,
-            download_jdk,
-            load_settings,
-            save_settings,
-            launch_game,
+            commands::get_java,
+            commands::download_jdk,
+            commands::load_settings,
+            commands::save_settings,
+            commands::launch_game,
             versions::get_versions,
             modrinth::search_content,
             modrinth::get_content_versions,

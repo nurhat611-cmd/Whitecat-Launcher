@@ -66,7 +66,7 @@ pub fn download_jdk(app: &AppHandle) -> Result<JavaInfo, String> {
             .map_err(|e| format!("Ошибка записи: {e}"))?;
         done += read as u64;
         let percent = match total {
-            Some(t) if t > 0 => (1 + (done as f64 / t as f64 * 88.0)) as u32,
+            Some(t) if t > 0 => (1.0 + (done as f64 / t as f64 * 88.0)) as u32,
             _ => 1,
         };
         emit_event(
