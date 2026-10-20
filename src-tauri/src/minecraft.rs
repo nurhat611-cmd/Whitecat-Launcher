@@ -58,9 +58,9 @@ pub fn launch(app: &AppHandle, settings: &LauncherSettings) -> Result<u32, Strin
         Some(dir) => PathBuf::from(dir),
         None => app
             .path()
-            .app_local_data_dir()
+            .app_data_dir()
             .map_err(|e| e.to_string())?
-            .join("minecraft"),
+            .join("Whitecat Launcher"),
     };
     for sub in ["versions", "libraries", "assets/indexes", "assets/objects", "natives"] {
         fs::create_dir_all(game_dir.join(sub))
