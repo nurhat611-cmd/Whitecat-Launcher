@@ -390,6 +390,8 @@ fn transfer(
 
 pub struct Plan {
     pub jobs: Vec<Job>,
+    /// id профиля (`minecraft` или `fabric-<версия>`) — пригодится при запуске.
+    #[allow(dead_code)]
     pub profile_id: String,
     pub mc_version: String,
     pub loader: String,
@@ -455,13 +457,14 @@ fn rule_matches(rule: &Value, ctx: &RulesCtx) -> bool {
     }
     if let Some(features) = rule.get("features") {
         if let Some(name) = features.as_str() {
-            if ctx.feature(name) {
+            if !ctx.feature(name) {
                 return false;
             }
         } else if let Some(obj) = features.as_object() {
             for (name, value) in obj {
+                // Правило подходит, только если флаг запрошен так же, как в манифесте.
                 let want = value.as_bool().unwrap_or(false);
-                if want {
+                if want != ctx.feature(name) {
                     return false;
                 }
             }
