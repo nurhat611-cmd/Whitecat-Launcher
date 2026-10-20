@@ -30,7 +30,7 @@ pub fn download_jdk(app: &AppHandle) -> Result<JavaInfo, String> {
     let meta = get_json(&meta_url).map_err(|e| format!("Не удалось получить данные Adoptium: {e}"))?;
     let link = meta[0]["binary"]["package"]["link"]
         .as_str()
-        .ok_or("Не удалось получить ссылку на JDK")?
+        .ok_or_else(|| "Не удалось получить ссылку на JDK".to_string())?
         .to_string();
     let package_name = meta[0]["binary"]["package"]["name"]
         .as_str()
@@ -88,7 +88,7 @@ pub fn download_jdk(app: &AppHandle) -> Result<JavaInfo, String> {
     } else {
         extract_targz(&archive, &raw)?;
     }
-    let inner = first_dir(&raw).ok_or("В архиве не найдена папка JDK")?;
+    let inner = first_dir(&raw).ok_or_else(|| "В архиве не найдена папка JDK".to_string())?;
     let dest = data.join("jdk");
     let _ = fs::remove_dir_all(&dest);
     fs::rename(&inner, &dest).map_err(|e| format!("Не удалось установить JDK: {e}"))?;

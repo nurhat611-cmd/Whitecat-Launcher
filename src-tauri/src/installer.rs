@@ -614,7 +614,7 @@ pub fn build_plan(
     let version_url = entry
         .get("url")
         .and_then(Value::as_str)
-        .ok_or("Повреждённый манифест версий")?;
+        .ok_or_else(|| "Повреждённый манифест версий".to_string())?;
     let vanilla = crate::http_json(version_url)
         .map_err(|e| format!("Не удалось загрузить описание версии {mc_id}: {e}"))?;
 
@@ -626,7 +626,7 @@ pub fn build_plan(
             .get(0)
             .and_then(|item| item.get("profile"))
             .cloned()
-            .ok_or("Для этой версии нет stable-сборки Fabric")?;
+            .ok_or_else(|| "Для этой версии нет stable-сборки Fabric".to_string())?;
         Some(profile)
     } else {
         None
@@ -721,7 +721,7 @@ pub fn build_plan(
                 let url = index
                     .get("url")
                     .and_then(Value::as_str)
-                    .ok_or("Нет ссылки на индекс ассетов")?;
+                    .ok_or_else(|| "Нет ссылки на индекс ассетов".to_string())?;
                 let value = crate::http_json(url)
                     .map_err(|e| format!("Не удалось загрузить индекс ассетов: {e}"))?;
                 if let Ok(text) = serde_json::to_string(&value) {

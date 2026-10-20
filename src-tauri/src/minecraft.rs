@@ -69,7 +69,7 @@ pub fn launch(app: &AppHandle, settings: &LauncherSettings) -> Result<u32, Strin
     let java_path = java_info
         .path
         .clone()
-        .ok_or("Java не найдена. Скачайте JDK во вкладке «Настройки»")?;
+        .ok_or_else(|| "Java не найдена. Скачайте JDK во вкладке «Настройки»".to_string())?;
     let java_major = java_info.major.unwrap_or(21);
 
     emit_event(app, EVENT, "manifest", "Загружаем список версий Minecraft…", 2);
@@ -85,7 +85,7 @@ pub fn launch(app: &AppHandle, settings: &LauncherSettings) -> Result<u32, Strin
             .get(0)
             .and_then(|entry| entry.get("profile"))
             .cloned()
-            .ok_or("Для этой версии нет stable-сборки Fabric")?;
+            .ok_or_else(|| "Для этой версии нет stable-сборки Fabric".to_string())?;
         Some(profile)
     } else {
         None
@@ -116,13 +116,13 @@ pub fn launch(app: &AppHandle, settings: &LauncherSettings) -> Result<u32, Strin
     let client_url = client
         .get("url")
         .and_then(Value::as_str)
-        .ok_or("В манифесте версии нет ссылки на клиент")?
+        .ok_or_else(|| "В манифесте версии нет ссылки на клиент".to_string())?
         .to_string();
     let client_jar = game_dir
         .join("versions")
         .join(&profile_id)
         .join(format!("{profile_id}.jar"));
-    fs::create_dir_all(client_jar.parent().ok_or("Некорректный путь к клиенту")?)
+    fs::create_dir_all(client_jar.parent().ok_or_else(|| "Некорректный путь к клиенту".to_string())?)
         .map_err(|e| e.to_string())?;
     download_file(
         &client_url,
@@ -198,7 +198,7 @@ fn load_vanilla_version(mc_id: &str) -> Result<Value, String> {
     let url = entry
         .get("url")
         .and_then(Value::as_str)
-        .ok_or("Повреждённый манифест версий")?;
+        .ok_or_else(|| "Повреждённый манифест версий".to_string())?;
     get_json(url).map_err(|e| format!("Не удалось загрузить описание версии {mc_id}: {e}"))
 }
 
@@ -237,16 +237,16 @@ fn resolve_library(
             let artifact = lib
                 .get("downloads")
                 .and_then(|d| d.get("artifact"))
-                .ok_or("Нет данных о natives-библиотеке")?;
+                .ok_or_else(|| "Нет данных о natives-библиотеке".to_string())?;
             let url = artifact
                 .get("url")
                 .and_then(Value::as_str)
-                .ok_or("Нет ссылки на natives")?
+                .ok_or_else(|| "Нет ссылки на natives".to_string())?
                 .to_string();
             let rel = artifact
                 .get("path")
                 .and_then(Value::as_str)
-                .ok_or("Нет пути natives-библиотеки")?;
+                .ok_or_else(|| "Нет пути natives-библиотеки".to_string())?;
             let file = download_file(
                 &url,
                 &game.join("libraries").join(rel),
@@ -274,7 +274,7 @@ fn resolve_library(
             let url = entry
                 .get("url")
                 .and_then(Value::as_str)
-                .ok_or("Нет ссылки на natives")?
+                .ok_or_else(|| "Нет ссылки на natives".to_string())?
                 .to_string();
             let rel = entry.get("path").and_then(Value::as_str).unwrap_or(&key);
             let file = download_file(
@@ -317,7 +317,7 @@ fn resolve_library(
         let rel = artifact
             .get("path")
             .and_then(Value::as_str)
-            .ok_or("Нет пути библиотеки")?;
+            .ok_or_else(|| "Нет пути библиотеки".to_string())?;
         let file = download_file(
             url,
             &game.join("libraries").join(rel),
@@ -334,7 +334,7 @@ fn resolve_library(
             .get("url")
             .and_then(Value::as_str)
             .unwrap_or("https://libraries.minecraft.net/");
-        let (url, rel) = maven_coordinates(name, base).ok_or("Некорректные maven-координаты")?;
+        let (url, rel) = maven_coordinates(name, base).ok_or_else(|| "Некорректные maven-координаты".to_string())?;
         let file = download_file(
             &url,
             &game.join("libraries").join(&rel),
@@ -463,16 +463,16 @@ fn ensure_assets(
     let index = profile
         .get("assetIndex")
         .or_else(|| vanilla.get("assetIndex"))
-        .ok_or("Нет данных об индексе ассетов")?;
+        .ok_or_else(|| "Нет данных об индексе ассетов".to_string())?;
     let index_id = index
         .get("id")
         .and_then(Value::as_str)
-        .ok_or("Нет id индекса ассетов")?
+        .ok_or_else(|| "Нет id индекса ассетов".to_string())?
         .to_string();
     let index_url = index
         .get("url")
         .and_then(Value::as_str)
-        .ok_or("Нет ссылки на индекс ассетов")?
+        .ok_or_else(|| "Нет ссылки на индекс ассетов".to_string())?
         .to_string();
     let index_path = game
         .join("assets")
