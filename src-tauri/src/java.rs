@@ -3,6 +3,8 @@
 use crate::JavaInfo;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use tauri::{AppHandle, Manager};
 
 pub fn java_bin_name() -> &'static str {
@@ -123,7 +125,10 @@ fn collect_java_dirs(base: &Path, out: &mut Vec<PathBuf>) {
 
 /// Запускает `java -version` (вывод приходит в stderr) и парсит версию.
 fn probe(path: &Path, source: &str) -> Result<JavaInfo, String> {
-    let output = Command::new(path)
+    let mut command = Command::new(path);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000); // CREATE_NO_WINDOW: Java probe must not flash a console.
+    let output = command
         .arg("-version")
         .output()
         .map_err(|e| format!("Не удалось выполнить java -version: {e}"))?;
