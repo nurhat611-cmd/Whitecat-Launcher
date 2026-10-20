@@ -11,7 +11,7 @@ permissions:
   checks: write
 
 jobs:
-  check:
+  windows-build:
     runs-on: windows-latest
     steps:
       - name: Check out source
@@ -26,20 +26,45 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis --yes --no-progress
+          }
+          $nsisDirectory = Join-Path ${env:ProgramFiles(x86)} "NSIS"
+          $makensisPath = Join-Path $nsisDirectory "makensis.exe"
+          if (Test-Path $makensisPath) {
+            $nsisDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Build frontend
-        run: npm run build
+      - name: Prepare updater configuration (no signing keys in this job)
+        shell: pwsh
+        run: |
+          $configPath = "src-tauri\tauri.conf.json"
+          $config = Get-Content $configPath -Raw | ConvertFrom-Json
+          $config.bundle.createUpdaterArtifacts = $false
+          $config | ConvertTo-Json -Depth 100 | Set-Content -Path $configPath -Encoding utf8
 
-      - name: Run cargo check
-        id: check
+      - name: Build Windows app and NSIS installer
+        id: build
         shell: pwsh
         continue-on-error: true
         run: |
-          cargo check --manifest-path src-tauri/Cargo.toml --message-format=short 2>&1 |
-            Tee-Object -FilePath cargo-check.log
+          npm run tauri build -- --bundles nsis 2>&1 | Tee-Object -FilePath build.log
           exit $LASTEXITCODE
+
+      - name: Report produced artifacts
+        if: always()
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path "src-tauri\target\release" -Filter "*.exe" -ErrorAction SilentlyContinue |
+            Select-Object FullName, Length
+          Get-ChildItem -Path "src-tauri\target\release\bundle\nsis" -ErrorAction SilentlyContinue |
+            Select-Object FullName, Length
 
       - name: Publish diagnostics
         if: always()
@@ -47,31 +72,31 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $log = Get-Content cargo-check.log -Raw -ErrorAction SilentlyContinue
+          $log = Get-Content build.log -Raw -ErrorAction SilentlyContinue
           if ([string]::IsNullOrWhiteSpace($log)) {
-            $log = "cargo check did not produce any output"
+            $log = "tauri build did not produce any output"
           }
           $max = 60000
           if ($log.Length -gt $max) {
             $log = "...(truncated)...`n" + $log.Substring($log.Length - $max)
           }
           $payload = @{
-            name       = "cargo check diagnostics"
+            name       = "windows build log"
             head_sha   = $env:GITHUB_SHA
             status     = "completed"
             conclusion = "neutral"
             output     = @{
-              title   = "cargo check output"
-              summary = "Output of cargo check --message-format=short"
+              title   = "npm run tauri build -- --bundles nsis"
+              summary = "Tail of the Windows release build log"
               text    = $log
             }
           } | ConvertTo-Json -Depth 6
           $payload | Out-File -FilePath payload.json -Encoding utf8
           gh api "repos/$env:GITHUB_REPOSITORY/check-runs" --method POST --input payload.json
 
-      - name: Fail when compiler reports errors
-        if: steps.check.outcome == 'failure'
+      - name: Fail when the build fails
+        if: steps.build.outcome == 'failure'
         shell: pwsh
         run: |
-          Write-Host "cargo check failed - see the 'cargo check diagnostics' check run."
+          Write-Host "Windows build failed - see the 'windows build log' check run."
           exit 1
