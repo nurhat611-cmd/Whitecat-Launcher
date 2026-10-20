@@ -11,6 +11,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Manager};
 
@@ -692,6 +694,8 @@ fn run_game(
         .map_err(|e| format!("Не удалось открыть файл launcher.log: {e}"))?;
     let log_err = log.try_clone().map_err(|e| e.to_string())?;
     let mut command = Command::new(java_path);
+    #[cfg(windows)]
+    command.creation_flags(0x00000008 | 0x00000200); // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     command.args(&args);
     command.current_dir(game);
     command.stdout(Stdio::from(log));
